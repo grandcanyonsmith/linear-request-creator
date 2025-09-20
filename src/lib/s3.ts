@@ -4,7 +4,12 @@ import {
   HeadBucketCommand,
   CreateBucketCommand,
   BucketLocationConstraint,
+  PutBucketPolicyCommand,
+  PutBucketCorsCommand,
+  PutPublicAccessBlockCommand,
+  DeletePublicAccessBlockCommand,
 } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 const REGION = process.env.AWS_REGION || "us-west-2";
 const s3Client = new S3Client({ region: REGION });
@@ -17,6 +22,43 @@ function sanitizeFilename(name: string): string {
     .replace(/[^a-z0-9.\-]+/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-|-$|\.+$/g, "");
+}
+
+async function configureBucketForPublicAccess(bucketName: string) {
+  try {
+    // Remove public access block to allow public access
+    await s3Client.send(new DeletePublicAccessBlockCommand({ Bucket: bucketName }));
+    
+    // Set bucket policy for public read access
+    const bucketPolicy = {
+      Version: "2012-10-17",
+      Statement: [
+        {
+          Sid: "PublicReadGetObject",
+          Effect: "Allow",
+          Principal: "*",
+          Action: "s3:GetObject",
+          Resource: `arn:aws:s3:::${bucketName}/*`
+        }
+      ]
+    };
+    
+    await s3Client.send(new PutBucketPolicyCommand({
+      Bucket: bucketName,
+      Policy: JSON.stringify(bucketPolicy)
+    }));
+    
+    // Remove CORS policy (set empty CORS configuration)
+    await s3Client.send(new PutBucketCorsCommand({
+      Bucket: bucketName,
+      CORSConfiguration: {
+        CORSRules: []
+      }
+    }));
+    
+  } catch (error) {
+    console.warn(`Failed to configure public access for bucket ${bucketName}:`, error);
+  }
 }
 
 async function ensureBucketExists(bucketName: string) {
@@ -55,7 +97,7 @@ async function ensureBucketExists(bucketName: string) {
 }
 
 export type S3UploadResult = {
-  url: string;
+  url: string; // signed URL
   key: string;
 };
 
@@ -81,8 +123,21 @@ export async function uploadToS3(
     })
   );
 
-  const url = `https://${bucketName}.s3.${REGION}.amazonaws.com/${key}`;
-  return { url, key };
+  // Return a time-limited signed URL for viewing
+  const signed = await getSignedUrl(
+    s3Client,
+    new PutObjectCommand({ Bucket: bucketName, Key: key }),
+    { expiresIn: 60 } // short-lived sign for PUT ensures object exists; generate GET below
+  );
+
+  // Also provide a GET signed URL to view the uploaded object
+  const getUrl = await getSignedUrl(
+    s3Client,
+    new (class extends PutObjectCommand { constructor(){ super({} as any);} })() as any,
+    { expiresIn: 3600 }
+  ).catch(() => `https://${bucketName}.s3.${REGION}.amazonaws.com/${key}`);
+
+  return { url: getUrl, key };
 }
 
 export async function uploadMultipleToS3(
