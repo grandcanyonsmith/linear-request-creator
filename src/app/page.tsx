@@ -14,6 +14,7 @@ export default function Home() {
   const [isRecording, setIsRecording] = useState(false);
   const [recorder, setRecorder] = useState<MediaRecorder | null>(null);
   const [recordedChunks, setRecordedChunks] = useState<Blob[]>([]);
+  const [recordedVideoUrl, setRecordedVideoUrl] = useState<string | null>(null);
 
   const EMPLOYEES = [
     "Stockton",
@@ -52,6 +53,10 @@ export default function Home() {
       setSubmitState({ status: "success", issueUrl: json.issueUrl, issueId: json.issueId });
       form.reset();
       setFiles([]);
+      if (recordedVideoUrl) {
+        URL.revokeObjectURL(recordedVideoUrl);
+        setRecordedVideoUrl(null);
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       setSubmitState({ status: "error", message });
@@ -117,6 +122,8 @@ export default function Home() {
                   mr.ondataavailable = (ev) => { if (ev.data && ev.data.size > 0) setRecordedChunks((p) => [...p, ev.data]); };
                   mr.onstop = () => {
                     const blob = new Blob(recordedChunks, { type: "video/webm" });
+                    const videoUrl = URL.createObjectURL(blob);
+                    setRecordedVideoUrl(videoUrl);
                     const file = new File([blob], `screen-recording-${Date.now()}.webm`, { type: "video/webm" });
                     setFiles((prev) => [...prev, file]);
                     setIsRecording(false);
@@ -136,7 +143,35 @@ export default function Home() {
               onClick={() => { if (recorder && isRecording) recorder.stop(); }}
               disabled={!isRecording}
             >Stop & attach recording</button>
+            {recordedVideoUrl && (
+              <button
+                type="button"
+                className="rounded-md bg-red-600 px-3 py-2 text-white"
+                onClick={() => {
+                  URL.revokeObjectURL(recordedVideoUrl);
+                  setRecordedVideoUrl(null);
+                  setFiles((prev) => prev.filter(f => !f.name.includes("screen-recording")));
+                }}
+              >Delete recording</button>
+            )}
           </div>
+
+          {recordedVideoUrl && (
+            <div className="mt-4 p-4 border rounded-md bg-gray-50">
+              <h4 className="text-sm font-medium mb-2">Preview your recording:</h4>
+              <video
+                src={recordedVideoUrl}
+                controls
+                className="w-full max-w-md rounded"
+                preload="metadata"
+              >
+                Your browser does not support video playback.
+              </video>
+              <p className="text-xs text-gray-600 mt-2">
+                Recording will be included when you submit the form.
+              </p>
+            </div>
+          )}
         </div>
 
         <button
