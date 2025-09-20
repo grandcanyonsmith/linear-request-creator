@@ -3,6 +3,7 @@ import {
   PutObjectCommand,
   HeadBucketCommand,
   CreateBucketCommand,
+  BucketLocationConstraint,
 } from "@aws-sdk/client-s3";
 
 const REGION = process.env.AWS_REGION || "us-west-2";
@@ -22,27 +23,29 @@ async function ensureBucketExists(bucketName: string) {
   if (ensuredBuckets.has(bucketName)) return;
   try {
     await s3Client.send(new HeadBucketCommand({ Bucket: bucketName }));
-  } catch (err: any) {
+  } catch (err: unknown) {
+    const e = err as { $metadata?: { httpStatusCode?: number }; name?: string; Code?: string };
     // Attempt to create if it truly doesn't exist
-    if (
-      err?.$metadata?.httpStatusCode === 404 ||
-      err?.name === "NotFound" ||
-      err?.Code === "NotFound"
-    ) {
+    if (e?.$metadata?.httpStatusCode === 404 || e?.name === "NotFound" || e?.Code === "NotFound") {
       try {
-        await s3Client.send(
-          new CreateBucketCommand({
-            Bucket: bucketName,
-            CreateBucketConfiguration: { LocationConstraint: REGION as any },
-          })
-        );
-      } catch (createErr: any) {
+        if (REGION === "us-east-1") {
+          await s3Client.send(new CreateBucketCommand({ Bucket: bucketName }));
+        } else {
+          await s3Client.send(
+            new CreateBucketCommand({
+              Bucket: bucketName,
+              CreateBucketConfiguration: { LocationConstraint: REGION as BucketLocationConstraint },
+            })
+          );
+        }
+      } catch (createErr: unknown) {
+        const ce = createErr as { name?: string };
         // If bucket exists in another account or name is taken, surface clear guidance
-        const msg =
-          createErr?.name === "BucketAlreadyOwnedByYou"
-            ? undefined
-            : `S3 bucket '${bucketName}' not found and could not be created. Set an existing bucket in env S3_BUCKET.`;
-        if (msg) throw new Error(msg);
+        if (ce?.name !== "BucketAlreadyOwnedByYou") {
+          throw new Error(
+            `S3 bucket '${bucketName}' not found and could not be created. Please create it in region '${REGION}' or set an existing bucket in env S3_BUCKET.`
+          );
+        }
       }
     } else {
       throw err;
@@ -75,7 +78,6 @@ export async function uploadToS3(
       Key: key,
       Body: file,
       ContentType: contentType,
-      ACL: "public-read",
     })
   );
 
