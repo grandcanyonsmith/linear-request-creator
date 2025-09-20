@@ -4,6 +4,7 @@ import { getKeys } from "@/lib/secrets";
 import { createOpenAI, analyzeToIssue, type Attachment } from "@/lib/openai";
 import { createLinearClient, findContext, findDuplicateIssue, createIssue, addIssueComment, updateIssue } from "@/lib/linear";
 import { determineRouting } from "@/lib/routing";
+import { uploadMultipleToS3 } from "@/lib/s3";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -44,6 +45,11 @@ export async function POST(req: NextRequest) {
     const usersConn = await linear.users();
     const users = usersConn.nodes.map(u => ({ id: u.id, name: u.name, email: (u.email as string | null) }));
 
+    // Upload files to S3 first
+    const s3Uploads = await uploadMultipleToS3(
+      attachments.map(a => ({ data: a.data, filename: a.filename, contentType: a.contentType }))
+    );
+
     const analysis = await analyzeToIssue(openai, {
       title: undefined,
       details: fields.details,
@@ -73,9 +79,13 @@ export async function POST(req: NextRequest) {
     const dup = await findDuplicateIssue(linear, analysis.title);
     if (dup) {
       // Merge: comment with new details and reassign if routing suggests
+      const attachmentLinks = s3Uploads.length > 0 
+        ? `\n\nAttachments:\n${s3Uploads.map(upload => `- [${upload.key.split('/').pop()}](${upload.url})`).join('\n')}`
+        : '';
+      
       await addIssueComment(linear, {
         issueId: dup.id,
-        body: `New submission merged into this issue.\n\nReporter: ${fields.reporterName || "anonymous"}\n\nDetails:\n${fields.details || "(none)"}`,
+        body: `New submission merged into this issue.\n\nReporter: ${fields.reporterName || "anonymous"}\n\nDetails:\n${fields.details || "(none)"}${attachmentLinks}`,
       });
       if (assignee?.id) {
         await updateIssue(linear, dup.id, {
@@ -87,7 +97,11 @@ export async function POST(req: NextRequest) {
       return new Response(JSON.stringify({ duplicate: true, issueId: dup.identifier, issueUrl: dup.url }), { status: 200, headers: { "content-type": "application/json" } });
     }
 
-    const description = `${analysis.description}\n\nSubmitted by: ${fields.reporterName || "anonymous"}`;
+    const attachmentLinks = s3Uploads.length > 0 
+      ? `\n\nAttachments:\n${s3Uploads.map(upload => `- [${upload.key.split('/').pop()}](${upload.url})`).join('\n')}`
+      : '';
+    
+    const description = `${analysis.description}\n\nSubmitted by: ${fields.reporterName || "anonymous"}${attachmentLinks}`;
     const issue = await createIssue(linear, {
       title: analysis.title,
       description,
