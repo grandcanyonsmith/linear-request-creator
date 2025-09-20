@@ -1,6 +1,55 @@
-import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import {
+  S3Client,
+  PutObjectCommand,
+  HeadBucketCommand,
+  CreateBucketCommand,
+} from "@aws-sdk/client-s3";
 
-const s3Client = new S3Client({ region: "us-west-2" });
+const REGION = process.env.AWS_REGION || "us-west-2";
+const s3Client = new S3Client({ region: REGION });
+
+const ensuredBuckets = new Set<string>();
+
+function sanitizeFilename(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9.\-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$|\.+$/g, "");
+}
+
+async function ensureBucketExists(bucketName: string) {
+  if (ensuredBuckets.has(bucketName)) return;
+  try {
+    await s3Client.send(new HeadBucketCommand({ Bucket: bucketName }));
+  } catch (err: any) {
+    // Attempt to create if it truly doesn't exist
+    if (
+      err?.$metadata?.httpStatusCode === 404 ||
+      err?.name === "NotFound" ||
+      err?.Code === "NotFound"
+    ) {
+      try {
+        await s3Client.send(
+          new CreateBucketCommand({
+            Bucket: bucketName,
+            CreateBucketConfiguration: { LocationConstraint: REGION as any },
+          })
+        );
+      } catch (createErr: any) {
+        // If bucket exists in another account or name is taken, surface clear guidance
+        const msg =
+          createErr?.name === "BucketAlreadyOwnedByYou"
+            ? undefined
+            : `S3 bucket '${bucketName}' not found and could not be created. Set an existing bucket in env S3_BUCKET.`;
+        if (msg) throw new Error(msg);
+      }
+    } else {
+      throw err;
+    }
+  }
+  ensuredBuckets.add(bucketName);
+}
 
 export type S3UploadResult = {
   url: string;
@@ -11,10 +60,14 @@ export async function uploadToS3(
   file: Buffer,
   filename: string,
   contentType: string,
-  bucketName: string = "linear-request-uploads"
+  bucketName: string = process.env.S3_BUCKET || "linear-request-uploads"
 ): Promise<S3UploadResult> {
   const timestamp = Date.now();
-  const key = `uploads/${timestamp}-${filename}`;
+  const safeName = sanitizeFilename(filename || "file");
+  const key = `uploads/${timestamp}-${safeName}`;
+  
+  // Ensure bucket is present (create if missing when allowed)
+  await ensureBucketExists(bucketName);
   
   await s3Client.send(
     new PutObjectCommand({
@@ -26,7 +79,7 @@ export async function uploadToS3(
     })
   );
 
-  const url = `https://${bucketName}.s3.us-west-2.amazonaws.com/${key}`;
+  const url = `https://${bucketName}.s3.${REGION}.amazonaws.com/${key}`;
   return { url, key };
 }
 
