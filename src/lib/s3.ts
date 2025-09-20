@@ -2,12 +2,7 @@ import {
   S3Client,
   PutObjectCommand,
   HeadBucketCommand,
-  CreateBucketCommand,
-  BucketLocationConstraint,
-  PutBucketPolicyCommand,
-  PutBucketCorsCommand,
-  PutPublicAccessBlockCommand,
-  DeletePublicAccessBlockCommand,
+  GetObjectCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
@@ -24,86 +19,22 @@ function sanitizeFilename(name: string): string {
     .replace(/^-|-$|\.+$/g, "");
 }
 
-async function configureBucketForPublicAccess(bucketName: string) {
-  try {
-    // Remove public access block to allow public access
-    await s3Client.send(new DeletePublicAccessBlockCommand({ Bucket: bucketName }));
-    
-    // Set bucket policy for public read access
-    const bucketPolicy = {
-      Version: "2012-10-17",
-      Statement: [
-        {
-          Sid: "PublicReadGetObject",
-          Effect: "Allow",
-          Principal: "*",
-          Action: "s3:GetObject",
-          Resource: `arn:aws:s3:::${bucketName}/*`
-        }
-      ]
-    };
-    
-    await s3Client.send(new PutBucketPolicyCommand({
-      Bucket: bucketName,
-      Policy: JSON.stringify(bucketPolicy)
-    }));
-    
-    // Remove CORS policy (set empty CORS configuration)
-    await s3Client.send(new PutBucketCorsCommand({
-      Bucket: bucketName,
-      CORSConfiguration: {
-        CORSRules: []
-      }
-    }));
-    
-  } catch (error) {
-    console.warn(`Failed to configure public access for bucket ${bucketName}:`, error);
-  }
-}
-
 async function ensureBucketExists(bucketName: string) {
   if (ensuredBuckets.has(bucketName)) return;
   try {
     await s3Client.send(new HeadBucketCommand({ Bucket: bucketName }));
   } catch (err: unknown) {
-    const e = err as { $metadata?: { httpStatusCode?: number }; name?: string; Code?: string };
-    // Attempt to create if it truly doesn't exist
-    if (e?.$metadata?.httpStatusCode === 404 || e?.name === "NotFound" || e?.Code === "NotFound") {
-      try {
-        if (REGION === "us-east-1") {
-          await s3Client.send(new CreateBucketCommand({ Bucket: bucketName }));
-        } else {
-          await s3Client.send(
-            new CreateBucketCommand({
-              Bucket: bucketName,
-              CreateBucketConfiguration: { LocationConstraint: REGION as BucketLocationConstraint },
-            })
-          );
-        }
-      } catch (createErr: unknown) {
-        const ce = createErr as { name?: string };
-        // If bucket exists in another account or name is taken, surface clear guidance
-        if (ce?.name !== "BucketAlreadyOwnedByYou") {
-          throw new Error(
-            `S3 bucket '${bucketName}' not found and could not be created. Please create it in region '${REGION}' or set an existing bucket in env S3_BUCKET.`
-          );
-        }
-      }
-    } else {
-      throw err;
-    }
+    // On platforms like Vercel, we typically do not have permission to create buckets.
+    // Provide a clear error so the user can create the bucket manually.
+    throw new Error(
+      `S3 bucket '${bucketName}' not found or not accessible in region '${REGION}'. Please create it and grant put/get permissions to the runtime IAM user, or set env S3_BUCKET to an existing bucket.`
+    );
   }
-  
-  // Configure bucket for public access (both for existing and newly created buckets)
-  await configureBucketForPublicAccess(bucketName);
-  
+
   ensuredBuckets.add(bucketName);
 }
 
-export type S3UploadResult = {
-  url: string; // public URL
-  key: string;
-};
+export type S3UploadResult = { url: string; key: string };
 
 export async function uploadToS3(
   file: Buffer,
@@ -115,7 +46,7 @@ export async function uploadToS3(
   const safeName = sanitizeFilename(filename || "file");
   const key = `uploads/${timestamp}-${safeName}`;
   
-  // Ensure bucket is present (create if missing when allowed) and configured for public access
+  // Ensure bucket exists and is accessible
   await ensureBucketExists(bucketName);
   
   await s3Client.send(
@@ -127,10 +58,14 @@ export async function uploadToS3(
     })
   );
 
-  // Return public URL since bucket is configured for public access
-  const publicUrl = `https://${bucketName}.s3.${REGION}.amazonaws.com/${key}`;
+  // Return a signed GET URL for temporary access
+  const signedGetUrl = await getSignedUrl(
+    s3Client,
+    new GetObjectCommand({ Bucket: bucketName, Key: key }),
+    { expiresIn: 3600 }
+  );
 
-  return { url: publicUrl, key };
+  return { url: signedGetUrl, key };
 }
 
 export async function uploadMultipleToS3(
