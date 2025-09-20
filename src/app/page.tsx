@@ -1,103 +1,166 @@
-import Image from "next/image";
+"use client";
+
+import { useState } from "react";
+
+type SubmitState =
+  | { status: "idle" }
+  | { status: "submitting" }
+  | { status: "success"; issueUrl?: string; issueId?: string }
+  | { status: "error"; message: string };
 
 export default function Home() {
-  return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+  const [submitState, setSubmitState] = useState<SubmitState>({ status: "idle" });
+  const [files, setFiles] = useState<File[]>([]);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recorder, setRecorder] = useState<MediaRecorder | null>(null);
+  const [recordedChunks, setRecordedChunks] = useState<Blob[]>([]);
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+  const EMPLOYEES = [
+    "Stockton",
+    "Canyon",
+    "Jack",
+    "Nebuchadnezzar",
+    "Ken",
+    "Hamza",
+    "Tony",
+    "Juan",
+    "Ray",
+    "Victor",
+    "James",
+    "Phil",
+    "Christian",
+    "Kyell",
+    "Sam",
+    "John (Media Buyer)",
+    "John (Setter)",
+    "Edwin",
+  ];
+
+  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const form = e.currentTarget as HTMLFormElement;
+    const formData = new FormData(form);
+    files.forEach((file) => formData.append("files", file));
+    setSubmitState({ status: "submitting" });
+    try {
+      const res = await fetch("/api/submit", {
+        method: "POST",
+        body: formData,
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Submission failed");
+      setSubmitState({ status: "success", issueUrl: json.issueUrl, issueId: json.issueId });
+      form.reset();
+      setFiles([]);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      setSubmitState({ status: "error", message });
+    }
+  }
+
+  return (
+    <div className="mx-auto max-w-3xl p-8">
+      <h1 className="text-2xl font-semibold">Submit a Request or Bug</h1>
+      <p className="mt-2 text-gray-600">Record your screen or upload screenshots/videos with details.</p>
+
+      <form onSubmit={onSubmit} className="mt-6 space-y-4" encType="multipart/form-data">
+        <div>
+          <label className="block text-sm font-medium">Reporter</label>
+          <select name="reporterName" className="mt-1 w-full rounded-md border p-2" required defaultValue="">
+            <option value="" disabled>Select your name</option>
+            {EMPLOYEES.map((n) => (
+              <option key={n} value={n}>{n}</option>
+            ))}
+          </select>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
+
+        <div>
+          <label className="block text-sm font-medium">Details</label>
+          <textarea name="details" placeholder="Steps to reproduce, expected vs actual, context" className="mt-1 w-full rounded-md border p-2" rows={6} />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium">Uploads</label>
+          <input
+            type="file"
+            name="files"
+            accept="image/*,video/*"
+            multiple
+            className="mt-1 w-full rounded-md border p-2"
+            onChange={(e) => {
+              const list = e.target.files ? Array.from(e.target.files) : [];
+              setFiles(list);
+            }}
           />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
+          {files.length > 0 ? (
+            <div className="mt-2 text-sm text-gray-600">{files.length} file(s) selected</div>
+          ) : null}
+
+          <div className="mt-4 space-x-2">
+            <button
+              type="button"
+              className="rounded-md bg-gray-800 px-3 py-2 text-white disabled:opacity-50"
+              onClick={async () => {
+                if (isRecording) return;
+                try {
+                  // Capture screen + mic
+                  const screen = await (navigator.mediaDevices as MediaDevices & { getDisplayMedia: (constraints: MediaStreamConstraints) => Promise<MediaStream> }).getDisplayMedia({ video: true, audio: true } as MediaStreamConstraints);
+                  let mic: MediaStream | null = null;
+                  try { mic = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch {}
+                  const combined = new MediaStream([
+                    ...screen.getVideoTracks(),
+                    ...(screen.getAudioTracks() || []),
+                    ...(mic ? mic.getAudioTracks() : []),
+                  ]);
+                  const mr = new MediaRecorder(combined, { mimeType: "video/webm;codecs=vp9,opus" });
+                  setRecordedChunks([]);
+                  mr.ondataavailable = (ev) => { if (ev.data && ev.data.size > 0) setRecordedChunks((p) => [...p, ev.data]); };
+                  mr.onstop = () => {
+                    const blob = new Blob(recordedChunks, { type: "video/webm" });
+                    const file = new File([blob], `screen-recording-${Date.now()}.webm`, { type: "video/webm" });
+                    setFiles((prev) => [...prev, file]);
+                    setIsRecording(false);
+                  };
+                  mr.start();
+                  setRecorder(mr);
+                  setIsRecording(true);
+                } catch (e) {
+                  console.error(e);
+                }
+              }}
+              disabled={isRecording}
+            >Start screen recording</button>
+            <button
+              type="button"
+              className="rounded-md bg-gray-600 px-3 py-2 text-white disabled:opacity-50"
+              onClick={() => { if (recorder && isRecording) recorder.stop(); }}
+              disabled={!isRecording}
+            >Stop & attach recording</button>
+          </div>
+        </div>
+
+        <button
+          type="submit"
+          disabled={submitState.status === "submitting"}
+          className="rounded-md bg-black px-4 py-2 text-white disabled:opacity-50"
         >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+          {submitState.status === "submitting" ? "Submitting..." : "Submit"}
+        </button>
+
+        {submitState.status === "error" ? (
+          <div className="text-sm text-red-600">{submitState.message}</div>
+        ) : null}
+        {submitState.status === "success" ? (
+          <div className="text-sm text-green-700">
+            Created Linear issue{submitState.issueId ? ` ${submitState.issueId}` : ""}.{" "}
+            {submitState.issueUrl ? (
+              <a href={submitState.issueUrl} className="underline" target="_blank" rel="noreferrer">
+                View in Linear
+              </a>
+            ) : null}
+          </div>
+        ) : null}
+      </form>
     </div>
   );
 }
