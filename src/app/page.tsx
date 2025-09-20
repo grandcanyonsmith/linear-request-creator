@@ -118,14 +118,15 @@ export default function Home() {
                     ...(mic ? mic.getAudioTracks() : []),
                   ]);
                   const mr = new MediaRecorder(combined, { mimeType: "video/webm;codecs=vp9,opus" });
-                  setRecordedChunks([]);
-                  mr.ondataavailable = (ev) => { if (ev.data && ev.data.size > 0) setRecordedChunks((p) => [...p, ev.data]); };
+                  const chunks: Blob[] = [];
+                  mr.ondataavailable = (ev) => { if (ev.data && ev.data.size > 0) chunks.push(ev.data); };
                   mr.onstop = () => {
-                    const blob = new Blob(recordedChunks, { type: "video/webm" });
+                    const blob = new Blob(chunks, { type: "video/webm" });
                     const videoUrl = URL.createObjectURL(blob);
                     setRecordedVideoUrl(videoUrl);
                     const file = new File([blob], `screen-recording-${Date.now()}.webm`, { type: "video/webm" });
                     setFiles((prev) => [...prev, file]);
+                    setRecordedChunks(chunks);
                     setIsRecording(false);
                   };
                   mr.start();
