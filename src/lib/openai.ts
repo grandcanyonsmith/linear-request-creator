@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { EMPLOYEE_DIRECTORY, TEAMS } from "@/lib/employeeDirectory";
 import { toFile } from "openai/uploads";
 
 export function createOpenAI(apiKey: string) {
@@ -44,9 +45,9 @@ export async function analyzeToIssue(openai: OpenAI, input: {
     }
   }
 
-  const system = `You are an assistant that converts mixed bug/request submissions (text, images, videos) into high-quality Linear issues.
-Given: submission details, available Linear teams/projects/users, infer the best team, project, assignee, and priority.
-Output a strict JSON object with fields: title (you must create it), description, teamName, projectName, assigneeEmail, priority (1-4), category (one of bug|feature|question|task), severity (one of critical|high|medium|low).`;
+  const system = `You are an assistant that converts mixed submissions (text, images, videos) into high-quality Linear issues. 
+Given: submission details, available Linear teams/projects/users, and the employee directory with roles and skills, infer the best team, project, assignee, and priority.
+Output a strict JSON object with fields: title (you must create it), description, teamName, projectName, assigneeEmail, priority (1-4), category (one of bug|feature|question|task), severity (one of critical|high|medium|low). Prefer assigning to the person whose skills best match the issue.`;
 
   type InputText = { type: "input_text"; text: string };
   const contentParts: Array<InputText> = [];
@@ -82,6 +83,8 @@ Output a strict JSON object with fields: title (you must create it), description
   contentParts.push({ type: "input_text", text: `Linear teams: ${JSON.stringify(input.context.teams)}` });
   contentParts.push({ type: "input_text", text: `Linear projects: ${JSON.stringify(input.context.projects)}` });
   contentParts.push({ type: "input_text", text: `Linear users: ${JSON.stringify(input.context.users.map(u => ({ id: u.id, name: u.name, email: u.email })))}` });
+  contentParts.push({ type: "input_text", text: `Employee directory: ${JSON.stringify(EMPLOYEE_DIRECTORY)}` });
+  contentParts.push({ type: "input_text", text: `Team list: ${JSON.stringify(TEAMS)}` });
   if (input.context.issues?.length) {
     contentParts.push({ type: "input_text", text: `Recent issues: ${JSON.stringify(input.context.issues.map(i => ({ id: i.id, identifier: i.identifier, title: i.title })))}` });
   }

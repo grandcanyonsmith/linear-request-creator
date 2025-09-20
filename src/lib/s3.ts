@@ -93,11 +93,15 @@ async function ensureBucketExists(bucketName: string) {
       throw err;
     }
   }
+  
+  // Configure bucket for public access (both for existing and newly created buckets)
+  await configureBucketForPublicAccess(bucketName);
+  
   ensuredBuckets.add(bucketName);
 }
 
 export type S3UploadResult = {
-  url: string; // signed URL
+  url: string; // public URL
   key: string;
 };
 
@@ -111,7 +115,7 @@ export async function uploadToS3(
   const safeName = sanitizeFilename(filename || "file");
   const key = `uploads/${timestamp}-${safeName}`;
   
-  // Ensure bucket is present (create if missing when allowed)
+  // Ensure bucket is present (create if missing when allowed) and configured for public access
   await ensureBucketExists(bucketName);
   
   await s3Client.send(
@@ -123,21 +127,10 @@ export async function uploadToS3(
     })
   );
 
-  // Return a time-limited signed URL for viewing
-  const signed = await getSignedUrl(
-    s3Client,
-    new PutObjectCommand({ Bucket: bucketName, Key: key }),
-    { expiresIn: 60 } // short-lived sign for PUT ensures object exists; generate GET below
-  );
+  // Return public URL since bucket is configured for public access
+  const publicUrl = `https://${bucketName}.s3.${REGION}.amazonaws.com/${key}`;
 
-  // Also provide a GET signed URL to view the uploaded object
-  const getUrl = await getSignedUrl(
-    s3Client,
-    new (class extends PutObjectCommand { constructor(){ super({} as any);} })() as any,
-    { expiresIn: 3600 }
-  ).catch(() => `https://${bucketName}.s3.${REGION}.amazonaws.com/${key}`);
-
-  return { url: getUrl, key };
+  return { url: publicUrl, key };
 }
 
 export async function uploadMultipleToS3(
